@@ -1,0 +1,34 @@
+From 468457db694c18669b098acb1be88510a1d0b469 Mon Sep 17 00:00:00 2001
+From: HandSomeGGZ <1300046380@qq.com>
+Date: Mon, 28 Oct 2019 20:40:21 +0800
+Subject: [PATCH] modify-color-bits
+
+---
+ .../drivers/video/w55fa93_FW043TFT_480x272_24B.c              | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/linux-2.6.35.4_fa93/drivers/video/w55fa93_FW043TFT_480x272_24B.c b/linux-2.6.35.4_fa93/drivers/video/w55fa93_FW043TFT_480x272_24B.c
+index 5403cb9b..a88f3297 100644
+--- a/linux-2.6.35.4_fa93/drivers/video/w55fa93_FW043TFT_480x272_24B.c
++++ b/linux-2.6.35.4_fa93/drivers/video/w55fa93_FW043TFT_480x272_24B.c
+@@ -58,7 +58,7 @@ extern unsigned int w55fa93_upll_clock;
+ 	   	outl(inl(REG_GPCFUN) | 0xFFFFFFFF, REG_GPCFUN);						// enable LVDATA[15:0] pins
+ 	   	outl(inl(REG_GPDFUN) | (MF_GPD11+MF_GPD10+MF_GPD9), REG_GPDFUN);	// enable HSYNC/VSYNC/VDEN pins	
+ 	   	outl(inl(REG_GPEFUN) | MF_GPE0 | MF_GPE1, REG_GPEFUN);				// enable LVDATA[17:16] pins		
+-		outl((inl(REG_GPBFUN) & (~0x03FFC000)) | 0x02AA8000, REG_GPBFUN);	// enable LVDATA[23:18] pins	
++		//outl((inl(REG_GPBFUN) & (~0x03FFC000)) | 0x02AA8000, REG_GPBFUN);	// enable LVDATA[23:18] pins	
+ 	   	
+ 		// configure LCD interface  // enable sync with TV, LCD type select 
+ 	   	outl(inl(REG_LCM_LCDCPrm)& ~LCDCPrm_LCDSynTv, REG_LCM_LCDCPrm);	// async with TV
+@@ -71,7 +71,7 @@ extern unsigned int w55fa93_upll_clock;
+ 		*/
+ 	
+ 		// configure LCD parallel data bus 
+-	   	outl( (inl(REG_LCM_LCDCCtl)& ~LCDCCtl_PRDB_SEL) | (0x02 << 20), REG_LCM_LCDCCtl);	// 24-bit mode 
++	   	outl( (inl(REG_LCM_LCDCCtl)& ~LCDCCtl_PRDB_SEL) | (0x0 << 20), REG_LCM_LCDCCtl);	// 24-bit mode 
+ 		/*
+ 		0x0  // 16-bit mode (RGB565 output)
+ 		0x1  // 18-bit mode (RGB666 output)
+-- 
+2.20.1
+

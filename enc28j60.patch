@@ -1,0 +1,358 @@
+diff --git a/linux-2.6.35.4_fa93/arch/arm/mach-w55fa93/dev.c b/linux-2.6.35.4_fa93/arch/arm/mach-w55fa93/dev.c
+index 7cca4c6..d2043a4 100644
+--- a/linux-2.6.35.4_fa93/arch/arm/mach-w55fa93/dev.c
++++ b/linux-2.6.35.4_fa93/arch/arm/mach-w55fa93/dev.c
+@@ -223,11 +223,11 @@ static struct spi_board_info w55fa93_spi_board_info[] __initdata = {
+                 .modalias = "m25p80",
+ #endif
+ #ifdef CONFIG_FA93_SPI_CS1_SPIDEV
+-		.modalias = "spidev",
++		.modalias = "enc28j60",
+ #endif
+                 .max_speed_hz = 50000000,
+                 .bus_num = 0,                
+-                .chip_select = 1,
++                .chip_select = 1, //GPA7
+                 .platform_data = &w55fa93_spi_flash_data,
+                 .mode = SPI_MODE_0,
+         },
+diff --git a/linux-2.6.35.4_fa93/build b/linux-2.6.35.4_fa93/build
+index c17f51f..d32319f 100755
+--- a/linux-2.6.35.4_fa93/build
++++ b/linux-2.6.35.4_fa93/build
+@@ -11,6 +11,7 @@ if [ "$#" = 1 ]; then
+ 		cp $ROOTFS/etc/profile_nand $ROOTFS/etc/profile
+ 		cp $ROOTFS/etc/mdev_nand.conf $ROOTFS/etc/mdev.conf
+ 	elif [ "$1" = "sd" ]; then	# for SD boot + NAND/SD solution
++		echo "###########sd################"
+ 		cp $ROOTFS/etc/profile_sd $ROOTFS/etc/profile
+ 		cp $ROOTFS/etc/mdev_sd.conf $ROOTFS/etc/mdev.conf
+ 	elif [ "$1" = "spi" ]; then	# for SPI boot
+diff --git a/linux-2.6.35.4_fa93/drivers/net/enc28j60.c b/linux-2.6.35.4_fa93/drivers/net/enc28j60.c
+old mode 100644
+new mode 100755
+index 112c5aa..a4aa5b8
+--- a/linux-2.6.35.4_fa93/drivers/net/enc28j60.c
++++ b/linux-2.6.35.4_fa93/drivers/net/enc28j60.c
+@@ -28,7 +28,10 @@
+ #include <linux/skbuff.h>
+ #include <linux/delay.h>
+ #include <linux/spi/spi.h>
++#include <linux/gpio.h>
++#include <asm/irq.h>
+ 
++#include <mach/w55fa93_reg.h>
+ #include "enc28j60_hw.h"
+ 
+ #define DRV_NAME	"enc28j60"
+@@ -48,6 +51,11 @@
+ /* Max TX retries in case of collision as suggested by errata datasheet */
+ #define MAX_TX_RETRYCOUNT	16
+ 
++#define IRQ_GPIO 32*1+4 //GPB4
++#define CS_GPIO	 32*0+7 //GPA7
++
++
++
+ enum {
+ 	RXFILTER_NORMAL,
+ 	RXFILTER_MULTI,
+@@ -75,11 +83,40 @@ struct enc28j60_net {
+ 	u8 spi_transfer_buf[SPI_TRANSFER_BUF_LEN];
+ };
+ 
++static int net_irq;
+ /* use ethtool to change the level for any given device */
+ static struct {
+ 	u32 msg_enable;
+ } debug = { -1 };
+ 
++static void net_cs_init(void)
++{
++	int ret;
++	ret=gpio_request(CS_GPIO,"net_cs");
++	if(ret<0)
++		printk("request io failed\n");
++	gpio_direction_output(CS_GPIO, 1);
++}
++
++static void net_cs(int state)
++{
++	gpio_set_value(CS_GPIO, state);
++}
++
++static void enc28j60_interrupt_clear(void)
++{
++	writel(readl(REG_IRQTGSRC0) & 0xFFFF0000, REG_IRQTGSRC0);
++}
++
++static void enc28j60_interrupt_gpio_cfg(void)
++{
++	writel(readl(REG_GPBFUN) & ~MF_GPB4, REG_GPBFUN);
++	writel(readl(REG_GPIOB_OMD) & ~(1 << 4), REG_GPIOB_OMD);
++	writel(readl(REG_GPIOB_PUEN) & ~(1 << 4), REG_GPIOB_PUEN);
++	writel(readl(REG_IRQENGPB) | (1 << 4), REG_IRQENGPB);
++}
++
++
+ /*
+  * SPI read buffer
+  * wait for the SPI transfer and copy received data to destination
+@@ -96,7 +133,7 @@ spi_read_buf(struct enc28j60_net *priv, int len, u8 *data)
+ 	};
+ 	struct spi_message msg;
+ 	int ret;
+-
++	net_cs(0);
+ 	tx_buf[0] = ENC28J60_READ_BUF_MEM;
+ 	tx_buf[1] = tx_buf[2] = tx_buf[3] = 0;	/* don't care */
+ 
+@@ -110,7 +147,7 @@ spi_read_buf(struct enc28j60_net *priv, int len, u8 *data)
+ 	if (ret && netif_msg_drv(priv))
+ 		printk(KERN_DEBUG DRV_NAME ": %s() failed: ret = %d\n",
+ 			__func__, ret);
+-
++	net_cs(1);
+ 	return ret;
+ }
+ 
+@@ -121,7 +158,7 @@ static int spi_write_buf(struct enc28j60_net *priv, int len,
+ 			 const u8 *data)
+ {
+ 	int ret;
+-
++	net_cs(0);
+ 	if (len > SPI_TRANSFER_BUF_LEN - 1 || len <= 0)
+ 		ret = -EINVAL;
+ 	else {
+@@ -132,6 +169,7 @@ static int spi_write_buf(struct enc28j60_net *priv, int len,
+ 			printk(KERN_DEBUG DRV_NAME ": %s() failed: ret = %d\n",
+ 				__func__, ret);
+ 	}
++	net_cs(1);
+ 	return ret;
+ }
+ 
+@@ -146,7 +184,7 @@ static u8 spi_read_op(struct enc28j60_net *priv, u8 op,
+ 	u8 val = 0;
+ 	int ret;
+ 	int slen = SPI_OPLEN;
+-
++	net_cs(0);
+ 	/* do dummy read if needed */
+ 	if (addr & SPRD_MASK)
+ 		slen++;
+@@ -158,7 +196,7 @@ static u8 spi_read_op(struct enc28j60_net *priv, u8 op,
+ 			__func__, ret);
+ 	else
+ 		val = rx_buf[slen - 1];
+-
++	net_cs(1);
+ 	return val;
+ }
+ 
+@@ -169,25 +207,33 @@ static int spi_write_op(struct enc28j60_net *priv, u8 op,
+ 			u8 addr, u8 val)
+ {
+ 	int ret;
+-
++	net_cs(0);
++	//printk("enter spi_write_op\n");
+ 	priv->spi_transfer_buf[0] = op | (addr & ADDR_MASK);
+ 	priv->spi_transfer_buf[1] = val;
++	//printk("enter spi_write_op 1\n");
+ 	ret = spi_write(priv->spi, priv->spi_transfer_buf, 2);
++	//printk("enter spi_write_op 2\n");
+ 	if (ret && netif_msg_drv(priv))
+ 		printk(KERN_DEBUG DRV_NAME ": %s() failed: ret = %d\n",
+ 			__func__, ret);
++//	printk("enter spi_write_op 3\n");
++	net_cs(1);
+ 	return ret;
+ }
+ 
+ static void enc28j60_soft_reset(struct enc28j60_net *priv)
+ {
++	//printk("enter enc28j60_soft_reset\n");
+ 	if (netif_msg_hw(priv))
+ 		printk(KERN_DEBUG DRV_NAME ": %s() enter\n", __func__);
+-
+-	spi_write_op(priv, ENC28J60_SOFT_RESET, 0, ENC28J60_SOFT_RESET);
++	//printk("enter enc28j60_soft_reset 1\n");
++	spi_write_op(priv, ENC28J60_SOFT_RESET, 0, ENC28J60_SOFT_RESET);//段错误在这
++	//printk("enter enc28j60_soft_reset 2\n");
+ 	/* Errata workaround #1, CLKRDY check is unreliable,
+ 	 * delay at least 1 mS instead */
+ 	udelay(2000);
++	//printk("enter enc28j60_soft_reset 3\n");
+ }
+ 
+ /*
+@@ -652,34 +698,40 @@ static void enc28j60_lowpower(struct enc28j60_net *priv, bool is_low)
+ static int enc28j60_hw_init(struct enc28j60_net *priv)
+ {
+ 	u8 reg;
+-
++	//printk("enter enc28j60_hw_init\n");
+ 	if (netif_msg_drv(priv))
+ 		printk(KERN_DEBUG DRV_NAME ": %s() - %s\n", __func__,
+ 			priv->full_duplex ? "FullDuplex" : "HalfDuplex");
+ 
+ 	mutex_lock(&priv->lock);
++	//printk("enter enc28j60_hw_init 1.1\n");
+ 	/* first reset the chip */
+-	enc28j60_soft_reset(priv);
++	enc28j60_soft_reset(priv);		
++	//printk("enter enc28j60_hw_init 1.1.1\n");	
+ 	/* Clear ECON1 */
+ 	spi_write_op(priv, ENC28J60_WRITE_CTRL_REG, ECON1, 0x00);
++	//printk("enter enc28j60_hw_init 1.2\n");
+ 	priv->bank = 0;
+ 	priv->hw_enable = false;
+ 	priv->tx_retry_count = 0;
+ 	priv->max_pk_counter = 0;
+ 	priv->rxfilter = RXFILTER_NORMAL;
++//	printk("enter enc28j60_hw_init 1.3\n");
+ 	/* enable address auto increment and voltage regulator powersave */
+ 	nolock_regb_write(priv, ECON2, ECON2_AUTOINC | ECON2_VRPS);
+ 
+ 	nolock_rxfifo_init(priv, RXSTART_INIT, RXEND_INIT);
+ 	nolock_txfifo_init(priv, TXSTART_INIT, TXEND_INIT);
++	//printk("enter enc28j60_hw_init 1.4\n");
+ 	mutex_unlock(&priv->lock);
+-
++	//printk("enter enc28j60_hw_init 2\n");
+ 	/*
+ 	 * Check the RevID.
+ 	 * If it's 0x00 or 0xFF probably the enc28j60 is not mounted or
+ 	 * damaged
+ 	 */
+ 	reg = locked_regb_read(priv, EREVID);
++	printk("chip RevID: 0x%02x\n", reg);
+ 	if (netif_msg_drv(priv))
+ 		printk(KERN_INFO DRV_NAME ": chip RevID: 0x%02x\n", reg);
+ 	if (reg == 0x00 || reg == 0xff) {
+@@ -739,7 +791,7 @@ static int enc28j60_hw_init(struct enc28j60_net *priv)
+ 	}
+ 	if (netif_msg_hw(priv))
+ 		enc28j60_dump_regs(priv, "Hw initialized.");
+-
++//	printk("enter enc28j60_hw_init 3\n");
+ 	return 1;
+ }
+ 
+@@ -1308,11 +1360,15 @@ static void enc28j60_tx_work_handler(struct work_struct *work)
+ 	/* actual delivery of data */
+ 	enc28j60_hw_tx(priv);
+ }
+-
++static irqreturn_t test_irq(int irq, void *dev)
++{
++	printk("run test irq\n");
++	return IRQ_HANDLED;
++}
+ static irqreturn_t enc28j60_irq(int irq, void *dev_id)
+ {
+ 	struct enc28j60_net *priv = dev_id;
+-
++	enc28j60_interrupt_clear();
+ 	/*
+ 	 * Can't do anything in interrupt context because we need to
+ 	 * block (spi_sync() is blocking) so fire of the interrupt
+@@ -1525,7 +1581,7 @@ static const struct ethtool_ops enc28j60_ethtool_ops = {
+ static int enc28j60_chipset_init(struct net_device *dev)
+ {
+ 	struct enc28j60_net *priv = netdev_priv(dev);
+-
++	printk("enter enc28j60_chipset_init 1\n");
+ 	return enc28j60_hw_init(priv);
+ }
+ 
+@@ -1559,7 +1615,7 @@ static int __devinit enc28j60_probe(struct spi_device *spi)
+ 		goto error_alloc;
+ 	}
+ 	priv = netdev_priv(dev);
+-
++	
+ 	priv->netdev = dev;	/* priv to netdev reference */
+ 	priv->spi = spi;	/* priv to spi reference */
+ 	priv->msg_enable = netif_msg_init(debug.msg_enable,
+@@ -1571,29 +1627,36 @@ static int __devinit enc28j60_probe(struct spi_device *spi)
+ 	INIT_WORK(&priv->restart_work, enc28j60_restart_work_handler);
+ 	dev_set_drvdata(&spi->dev, priv);	/* spi to priv reference */
+ 	SET_NETDEV_DEV(dev, &spi->dev);
++	net_cs_init();				//初始化片选
+ 
+-	if (!enc28j60_chipset_init(dev)) {
++	if (!enc28j60_chipset_init(dev)) {			
++		printk("****1111 ****\n");
+ 		if (netif_msg_probe(priv))
+ 			dev_info(&spi->dev, DRV_NAME " chip not found\n");
++		printk("****2222 ****\n");
+ 		ret = -EIO;
+ 		goto error_irq;
+ 	}
+ 	random_ether_addr(dev->dev_addr);
+ 	enc28j60_set_hw_macaddr(dev);
+-
++	/****************************ggz add**************************/
++	
++	enc28j60_interrupt_gpio_cfg();			//中断IO设置
++	printk("net_irq=%d\n",IRQ_GPIO1);
+ 	/* Board setup must set the relevant edge trigger type;
+ 	 * level triggers won't currently work.
+ 	 */
+-	ret = request_irq(spi->irq, enc28j60_irq, 0, DRV_NAME, priv);
++	//ret=request_irq(net_irq, enc28j60_irq,IRQ_TYPE_EDGE_FALLING, DRV_NAME, priv);
++	ret = request_irq(IRQ_GPIO1, enc28j60_irq,0, DRV_NAME, priv);
+ 	if (ret < 0) {
+-		if (netif_msg_probe(priv))
++		if (netif_msg_probe(priv)){
+ 			dev_err(&spi->dev, DRV_NAME ": request irq %d failed "
+-				"(ret = %d)\n", spi->irq, ret);
++				"(ret = %d)\n", net_irq, ret);
++			}
+ 		goto error_irq;
+ 	}
+-
+ 	dev->if_port = IF_PORT_10BASET;
+-	dev->irq = spi->irq;
++	dev->irq = net_irq;
+ 	dev->netdev_ops = &enc28j60_netdev_ops;
+ 	dev->watchdog_timeo = TX_TIMEOUT;
+ 	SET_ETHTOOL_OPS(dev, &enc28j60_ethtool_ops);
+@@ -1612,7 +1675,7 @@ static int __devinit enc28j60_probe(struct spi_device *spi)
+ 	return 0;
+ 
+ error_register:
+-	free_irq(spi->irq, priv);
++	free_irq(net_irq, priv);
+ error_irq:
+ 	free_netdev(dev);
+ error_alloc:
+@@ -1627,7 +1690,7 @@ static int __devexit enc28j60_remove(struct spi_device *spi)
+ 		printk(KERN_DEBUG DRV_NAME ": remove\n");
+ 
+ 	unregister_netdev(priv->netdev);
+-	free_irq(spi->irq, priv);
++	free_irq(net_irq, priv);
+ 	free_netdev(priv->netdev);
+ 
+ 	return 0;
+diff --git a/linux-2.6.35.4_fa93/kernel/timeconst.pl b/linux-2.6.35.4_fa93/kernel/timeconst.pl
+index eb51d76..848c6d0 100644
+--- a/linux-2.6.35.4_fa93/kernel/timeconst.pl
++++ b/linux-2.6.35.4_fa93/kernel/timeconst.pl
+@@ -370,7 +370,7 @@ if ($hz eq '--can') {
+ 	}
+ 
+ 	@val = @{$canned_values{$hz}};
+-	if (!defined(@val)) {
++	if (@val) {
+ 		@val = compute_values($hz);
+ 	}
+ 	output($hz, @val);
+diff --git a/rootfs-2.6.35.tar.gz b/rootfs-2.6.35.tar.gz
+deleted file mode 100644
+index a6df902..0000000
+Binary files a/rootfs-2.6.35.tar.gz and /dev/null differ

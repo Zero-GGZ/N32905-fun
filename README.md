@@ -26,7 +26,7 @@
 ~~~
 
 ### 打补丁
-  进入内核上一级目录，[参考教程](url=https://www.cnblogs.com/hrhguanli/p/4549006.html)
+  进入内核上一级目录，[参考教程](https://www.cnblogs.com/hrhguanli/p/4549006.html) 
 
 - 命令： git apply xxx.patch 
 

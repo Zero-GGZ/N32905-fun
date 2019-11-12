@@ -26,7 +26,11 @@
 ~~~
 
 ### 打补丁
-进入内核上一级目录，[参考教程](url=https://www.cnblogs.com/hrhguanli/p/4549006.html)
-命令： git apply xxx.patch 
-报错：patch does not apply
-解决办法：强制把能打上的补丁打上，git apply --reject xxx.patch 根据生成生成的*.rej，根据*.rej把未打上的补丁打上即可
+  进入内核上一级目录，[参考教程](url=https://www.cnblogs.com/hrhguanli/p/4549006.html)
+
+- 命令： git apply xxx.patch 
+
+- 报错：patch does not apply
+
+- 解决办法：强制把能打上的补丁打上，git apply --reject xxx.patch 根据生成生成的*.rej，根据*.rej把未打上的补丁打上即可
+
